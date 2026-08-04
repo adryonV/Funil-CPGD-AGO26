@@ -179,17 +179,25 @@ const headerIndex = (h, name) => h.findIndex((x) => x.trim().toLowerCase() === n
     const [c, s] = (best || '||').split('||');
     adToCombo.set(ak, { c, s, a: adOriginal.get(ak) });
   }
-  // Resolve any ad-name candidate against the ads sheet: exact fold, else longest
-  // common-prefix match (handles "AD_004_VD_ING_04_1" vs sheet "AD_004_VD…").
-  function resolveAd(cand) {
+  // Canonical name lookups (folded → original ads-sheet spelling) so a sale's
+  // campaign/conjunto/anúncio join EXACTLY to the ad rows in the grouping tables.
+  const canonCamp = new Map(), canonSet = new Map(), canonAd = new Map();
+  for (const r of ads) {
+    if (r.c) canonCamp.set(fold(r.c), r.c);
+    if (r.s) canonSet.set(fold(r.s), r.s);
+    if (r.a) canonAd.set(fold(r.a), r.a);
+  }
+  // Resolve an ad-name candidate: exact fold match, else longest common-prefix
+  // (≥6 chars) against known ad names. Returns the canonical ad name or ''.
+  function resolveAdName(cand) {
     const c = fold(cand);
-    if (!c) return null;
-    if (adToCombo.has(c)) return adToCombo.get(c);
-    let best = null, bestLen = 0;
-    for (const [ak, combo] of adToCombo) {
+    if (!c) return '';
+    if (canonAd.has(c)) return canonAd.get(c);
+    let best = '', bestLen = 0;
+    for (const [ak, orig] of canonAd) {
       let n = 0; const L = Math.min(ak.length, c.length);
       while (n < L && ak[n] === c[n]) n++;
-      if (n >= 6 && n > bestLen) { bestLen = n; best = combo; }
+      if (n >= 6 && n > bestLen) { bestLen = n; best = orig; }
     }
     return best;
   }
@@ -252,15 +260,16 @@ const headerIndex = (h, name) => h.findIndex((x) => x.trim().toLowerCase() === n
 
     if (paid) {
       src = 'meta-ads';
-      // Candidates for the ad name, best first.
-      const cands = [adFromContent(lead.cont), stripId(lead.med), stripId(lead.camp)].filter(Boolean);
-      let combo = null;
-      for (const cand of cands) { combo = resolveAd(cand); if (combo) break; }
-      if (combo) { c = combo.c; s = combo.s; ad = combo.a; m = 'ad'; }
-      else if (isUtm(lead.camp)) { c = stripId(lead.camp); s = isUtm(lead.med) ? stripId(lead.med) : ''; ad = ''; m = 'campaign'; }
-      else { m = ''; }
+      // This account's UTMs = "<name>|<meta id>" (utm_content also has a ::tracking:: tail).
+      // Strip the id → cleaned values match the ads sheet EXACTLY; map to canonical spelling.
+      ad = resolveAdName(adFromContent(lead.cont));
+      const uCamp = stripId(lead.camp), uSet = stripId(lead.med);
+      const adCombo = ad ? adToCombo.get(fold(ad)) : null;
+      c = canonCamp.get(fold(uCamp)) || (adCombo ? adCombo.c : '') || (isUtm(uCamp) ? uCamp : '');
+      s = canonSet.get(fold(uSet))  || (adCombo ? adCombo.s : '') || (isUtm(uSet)  ? uSet  : '');
+      m = ad ? 'ad' : (c ? 'campaign' : 'none');
       trafficSales++;
-      attribution[m === 'ad' ? 'ad' : m === 'campaign' ? 'campaign' : 'none']++;
+      attribution[m]++;
     }
     sales.push({ d, v: Math.round(value * 100) / 100, src, m, c, s, a: ad });
   }
