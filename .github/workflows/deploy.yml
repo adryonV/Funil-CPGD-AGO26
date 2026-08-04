@@ -1,0 +1,59 @@
+name: Build & Deploy — Funil de Tráfego (CPGD-AGO26)
+
+on:
+  # Agendador na nuvem (backup): a cada 2 horas no minuto 0 (UTC).
+  schedule:
+    - cron: '0 */2 * * *'
+  # Botão "Run workflow" na aba Actions.
+  workflow_dispatch:
+  # Gatilho externo do cron-job.org (POST /dispatches com event_type "rebuild").
+  repository_dispatch:
+    types: [rebuild]
+  # Deploy automático no primeiro push.
+  push:
+    branches: [main]
+
+# Token de menor privilégio para publicar no Pages. Nenhum PAT fica no repositório.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Nunca roda dois deploys ao mesmo tempo; o mais novo vence.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Buscar planilhas e gerar public/data.json
+        run: node build.mjs
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload do artefato (public/)
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy no GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
