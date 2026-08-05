@@ -8,13 +8,15 @@
 //   1) Métricas dos Anúncios — aba "Meta Ads": Day / Campaign Name / Ad Set Name /
 //      Ad Name / Amount Spent / Impressions / Link Clicks / Landing Page Views /
 //      Checkouts Initiated. One row per day×campaign×conjunto×anúncio.
-//   2) Lista de Compradores — DUAS abas somadas:
-//        • "Vendas Geral"  → coluna espinha das VENDAS: Data|Hora, Nome (completo),
-//          Produto, Bruto, Líquido. Tem o VALOR mas NÃO tem UTM.
-//        • "BASE COMPLETA" → tem as UTMs (utm_source/medium/campaign/content) e o
-//          PRIMEIRO nome do comprador, mas NÃO tem valor.
-//      Cruzamos Vendas Geral ↔ BASE COMPLETA por PRIMEIRO NOME (+ data) para juntar
-//      valor + atribuição, e então resolvemos o anúncio de origem.
+//   2) Lista de Compradores — DUAS abas:
+//        • "BASE COMPLETA" → ESPINHA DAS VENDAS: 1 linha por comprador COM as UTMs
+//          (utm_source/medium/campaign/content) e o PRIMEIRO nome. É a única aba com
+//          atribuição ("de qual anúncio veio"), então ela define contagem + funil.
+//        • "Vendas Geral"  → só o VALOR (Data|Hora, Nome completo, Produto, Bruto).
+//          NÃO tem UTM e NÃO é a lista completa (vendas recuperadas ficam fora dela).
+//      Para cada venda da BASE COMPLETA buscamos o valor na Vendas Geral pelo PRIMEIRO
+//      nome (+ data); comprador sem valor (venda recuperada) entra a R$ 19,90.
+//      Atribuição pago/orgânico e campanha/conjunto/anúncio vêm das UTMs da BASE COMPLETA.
 //
 // IMPOSTO: o gasto vai CRU (bruto) no data.json; o dashboard multiplica por meta.tax
 // (×1,1385) antes de TODAS as métricas — assim nenhuma métrica escapa do imposto.
@@ -202,7 +204,42 @@ const headerIndex = (h, name) => h.findIndex((x) => x.trim().toLowerCase() === n
     return best;
   }
 
-  // ---------------- Sheet 2a: BASE COMPLETA (UTMs by first name) ----------------
+  // ---------------- Sheet 2b: Vendas Geral (VALUE lookup, by name) ----------------
+  // Vendas Geral has the purchase value (Bruto) but NO UTM. Used only to price each
+  // buyer. NOTE: it is NOT the complete sales list — recovered sales live in other
+  // tabs and are absent here — so it must NOT be the sales spine (that's BASE COMPLETA).
+  const v = parseCSV(csvVendas);
+  const h3 = v[0] || [];
+  const V = {
+    date: headerIndex(h3, 'Data | Hora') >= 0 ? headerIndex(h3, 'Data | Hora') : 0,
+    name: headerIndex(h3, 'Nome'),
+    prod: headerIndex(h3, 'Produto'),
+    val:  headerIndex(h3, 'Bruto'),
+  };
+  const FALLBACK_VALUE = 19.90;   // buyer with no value found (recovered sale) → R$19,90
+  const vgByND = new Map();       // "first|date" -> value
+  const vgByN  = new Map();       // "first" -> value (first occurrence)
+  const vgRows = [];              // {fn, d, value} — for the "só Vendas Geral" fallback
+  for (let i = 1; i < v.length; i++) {
+    const r = v[i];
+    if (!r || r.length < 2) continue;
+    const value = num(r[V.val]);
+    if (!(value > 0)) continue;
+    const fn = firstName(r[V.name]);
+    if (!fn) continue;
+    const d = isoDate(r[V.date]);
+    if (d) vgByND.set(fn + '|' + d, value);
+    if (!vgByN.has(fn)) vgByN.set(fn, value);
+    vgRows.push({ fn, d, value });
+  }
+  const valueFor = (fn, d) =>
+    (d && vgByND.has(fn + '|' + d)) ? vgByND.get(fn + '|' + d)
+    : vgByN.has(fn) ? vgByN.get(fn)
+    : null;
+
+  // ---------------- Sheet 2a: BASE COMPLETA = SALES SPINE (count + attribution) ----
+  // Each row is one sale/buyer WITH its ad attribution (UTMs). This is the only sheet
+  // that carries "de qual anúncio veio", so it drives the sales count and the funnel.
   const b = parseCSV(csvBase);
   const h2 = b[0] || [];
   const B = {
@@ -213,57 +250,32 @@ const headerIndex = (h, name) => h.findIndex((x) => x.trim().toLowerCase() === n
     camp:  headerIndex(h2, 'utm_campaign'),
     cont:  headerIndex(h2, 'utm_content'),
   };
-  const leadByND = new Map(); // "first|date" -> lead
-  const leadByN  = new Map(); // "first" -> lead (first occurrence)
+  const sales = [];
+  const attribution = { ad: 0, adset: 0, campaign: 0, none: 0 };
+  let trafficSales = 0, fallbackValued = 0;
+  const bcFirst = new Set();
+
   for (let i = 1; i < b.length; i++) {
     const r = b[i];
     if (!r || r.length < 2) continue;
     const fn = firstName(r[B.name]);
     if (!fn) continue;
+    bcFirst.add(fn);
     const d = isoDate(r[B.date]);
-    const lead = {
-      src: String(r[B.src] || '').trim(),
-      camp: r[B.camp], med: r[B.med], cont: r[B.cont],
-    };
-    if (d) leadByND.set(fn + '|' + d, lead);
-    if (!leadByN.has(fn)) leadByN.set(fn, lead);
-  }
-
-  // ---------------- Sheet 2b: Vendas Geral (sales spine + value) ----------------
-  const v = parseCSV(csvVendas);
-  const h3 = v[0] || [];
-  const V = {
-    date: headerIndex(h3, 'Data | Hora') >= 0 ? headerIndex(h3, 'Data | Hora') : 0,
-    name: headerIndex(h3, 'Nome'),
-    prod: headerIndex(h3, 'Produto'),
-    val:  headerIndex(h3, 'Bruto'),
-  };
-  const sales = [];
-  const attribution = { ad: 0, adset: 0, campaign: 0, none: 0 };
-  let salesRows = 0, trafficSales = 0, unmatchedName = 0;
-
-  for (let i = 1; i < v.length; i++) {
-    const r = v[i];
-    if (!r || r.length < 2) continue;
-    const d = isoDate(r[V.date]);
     if (!d) continue;
-    const value = num(r[V.val]);
-    if (!(value > 0)) continue;                    // skip empty/zero rows
-    salesRows++;
 
-    const fn = firstName(r[V.name]);
-    const lead = leadByND.get(fn + '|' + d) || leadByN.get(fn) || null;
-    if (!lead) unmatchedName++;
+    // Value: buyer's Bruto from Vendas Geral; if absent (recovered sale) → R$19,90.
+    let value = valueFor(fn, d);
+    if (value == null) { value = FALLBACK_VALUE; fallbackValued++; }
 
-    const paid = lead ? isPaidSource(lead.src) : false;
+    const paid = isPaidSource(r[B.src]);
     let src = 'organico', m = '', c = '', s = '', ad = '';
-
     if (paid) {
       src = 'meta-ads';
-      // This account's UTMs = "<name>|<meta id>" (utm_content also has a ::tracking:: tail).
-      // Strip the id → cleaned values match the ads sheet EXACTLY; map to canonical spelling.
-      ad = resolveAdName(adFromContent(lead.cont));
-      const uCamp = stripId(lead.camp), uSet = stripId(lead.med);
+      // UTMs = "<name>|<meta id>" (utm_content also has a ::tracking:: tail). Strip the id
+      // → cleaned values match the ads sheet EXACTLY; map to canonical spelling.
+      ad = resolveAdName(adFromContent(r[B.cont]));
+      const uCamp = stripId(r[B.camp]), uSet = stripId(r[B.med]);
       const adCombo = ad ? adToCombo.get(fold(ad)) : null;
       c = canonCamp.get(fold(uCamp)) || (adCombo ? adCombo.c : '') || (isUtm(uCamp) ? uCamp : '');
       s = canonSet.get(fold(uSet))  || (adCombo ? adCombo.s : '') || (isUtm(uSet)  ? uSet  : '');
@@ -274,6 +286,16 @@ const headerIndex = (h, name) => h.findIndex((x) => x.trim().toLowerCase() === n
     sales.push({ d, v: Math.round(value * 100) / 100, src, m, c, s, a: ad });
   }
 
+  // Sales present only in Vendas Geral (no BASE COMPLETA row → no UTM) count as
+  // organic/unattributed so the "Visão Geral" total stays complete (e.g. Vitória).
+  let vgOnly = 0;
+  for (const row of vgRows) {
+    if (bcFirst.has(row.fn) || !row.d) continue;
+    vgOnly++;
+    sales.push({ d: row.d, v: Math.round(row.value * 100) / 100, src: 'organico', m: '', c: '', s: '', a: '' });
+  }
+  const salesRows = sales.length;
+
   // ---------------- Output (reference data.json contract) ----------------
   const allDates = [...ads.map((x) => x.d), ...sales.map((x) => x.d)].sort();
   const nowBR = new Date().toLocaleString('pt-BR', {
@@ -282,8 +304,9 @@ const headerIndex = (h, name) => h.findIndex((x) => x.trim().toLowerCase() === n
   }).replace(',', '');
 
   const warnings = [];
-  if (unmatchedName > 0) warnings.push(`${unmatchedName} venda(s) sem correspondência de nome na aba BASE COMPLETA — contadas como orgânico/não atribuído.`);
-  if (attribution.none > 0) warnings.push(`${attribution.none} venda(s) de tráfego pago sem anúncio resolvido (UTM incompleta).`);
+  if (fallbackValued > 0) warnings.push(`${fallbackValued} venda(s) sem valor na Vendas Geral (ex.: recuperadas) — receita estimada em R$ 19,90 cada.`);
+  if (vgOnly > 0) warnings.push(`${vgOnly} venda(s) só na Vendas Geral, sem UTM na BASE COMPLETA — contadas como orgânicas/não atribuídas.`);
+  if (attribution.none > 0) warnings.push(`${attribution.none} venda(s) de tráfego sem anúncio resolvido (UTM incompleta).`);
 
   const out = {
     meta: {
@@ -297,7 +320,7 @@ const headerIndex = (h, name) => h.findIndex((x) => x.trim().toLowerCase() === n
       date_max: allDates[allDates.length - 1] || null,
       ads_url: ADS_URL,
       sales_url: BUYERS_URL,
-      sales_tab: 'Vendas Geral + BASE COMPLETA',
+      sales_tab: 'BASE COMPLETA (atribuição) + Vendas Geral (valor)',
       counts: {
         ads_rows: ads.length,
         sales_rows: salesRows,
