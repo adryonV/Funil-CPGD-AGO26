@@ -230,7 +230,7 @@ const headerIndex = (h, name) => h.findIndex((x) => x.trim().toLowerCase() === n
     const d = isoDate(r[V.date]);
     if (d) vgByND.set(fn + '|' + d, value);
     if (!vgByN.has(fn)) vgByN.set(fn, value);
-    vgRows.push({ fn, d, value });
+    vgRows.push({ fn, d, value, prod: normKey(r[V.prod]) });
   }
   const valueFor = (fn, d) =>
     (d && vgByND.has(fn + '|' + d)) ? vgByND.get(fn + '|' + d)
@@ -296,6 +296,39 @@ const headerIndex = (h, name) => h.findIndex((x) => x.trim().toLowerCase() === n
   }
   const salesRows = sales.length;
 
+  // ---------------- Produtos: Core × Order bump (da Vendas Geral, line-items) -------
+  // Core = produto principal do lançamento; o resto (Combo, Profissão, etc.) = order bump.
+  const CORE_PRODUCT = 'Curso Prático de Gestão de Projetos Digitais';
+  const coreFold = fold(CORE_PRODUCT);
+  const round2 = (n) => Math.round(n * 100) / 100;
+  const prodMap = new Map();                 // nome -> {count, revenue}
+  for (const r of vgRows) {
+    const name = r.prod || '(sem produto)';
+    const o = prodMap.get(name) || { count: 0, revenue: 0 };
+    o.count++; o.revenue += r.value; prodMap.set(name, o);
+  }
+  const prodItems = [...prodMap.entries()]
+    .map(([name, o]) => ({ name, count: o.count, revenue: round2(o.revenue), core: fold(name) === coreFold }))
+    .sort((a, b) => (b.core - a.core) || (b.revenue - a.revenue));
+  const sumG = (f) => prodItems.filter(f).reduce((t, x) => ({ count: t.count + x.count, revenue: round2(t.revenue + x.revenue) }), { count: 0, revenue: 0 });
+  // Order bump: por PEDIDO (comprador+dia) — dos pedidos com o Core, quantos levaram um bump.
+  const orderMap = new Map();                // "fn|dia" -> {core, bump}
+  for (const r of vgRows) {
+    const key = r.fn + '|' + (r.d || '');
+    const o = orderMap.get(key) || { core: false, bump: false };
+    if (fold(r.prod) === coreFold) o.core = true; else if (r.prod) o.bump = true;
+    orderMap.set(key, o);
+  }
+  let coreOrders = 0, ordersWithBump = 0;
+  for (const o of orderMap.values()) if (o.core) { coreOrders++; if (o.bump) ordersWithBump++; }
+  const products = {
+    core_name: CORE_PRODUCT,
+    items: prodItems,
+    core: sumG((x) => x.core),
+    bumps: sumG((x) => !x.core),
+    orderbump: { core_orders: coreOrders, orders_with_bump: ordersWithBump, rate: coreOrders ? round2(ordersWithBump / coreOrders * 100) / 100 : null },
+  };
+
   // ---------------- Output (reference data.json contract) ----------------
   const allDates = [...ads.map((x) => x.d), ...sales.map((x) => x.d)].sort();
   const nowBR = new Date().toLocaleString('pt-BR', {
@@ -331,6 +364,7 @@ const headerIndex = (h, name) => h.findIndex((x) => x.trim().toLowerCase() === n
     },
     ads,
     sales,
+    products,
   };
 
   mkdirSync('public', { recursive: true });

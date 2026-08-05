@@ -46,16 +46,34 @@ header.top{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;justify-con
 h1{font-size:19px;font-weight:600;letter-spacing:-.01em;margin:0 0 4px;color:var(--ink-2)}
 .sub{color:var(--ink-3);font-size:13px;margin:0}
 
-/* marca Best-Seller de Verdade (recriação vetorial — trocável pelo PNG real) */
-.brandlock{display:inline-flex;flex-direction:column;gap:9px;margin-bottom:14px}
-.mc-pill{align-self:flex-start;border:1.5px solid var(--brand);color:var(--brand);
-  font-size:9px;font-weight:700;letter-spacing:.3em;padding:3px 9px 3px 11px;border-radius:999px;
+/* marca do curso — Gestão de Projetos Digitais (recriação em HTML sobre fundo preto;
+   trocável pelo PNG/SVG oficial se o cliente enviar o arquivo) */
+.gplock{display:inline-flex;align-items:center;gap:13px;background:#000;
+  border:1px solid #2a1f22;border-radius:13px;padding:10px 16px;margin-bottom:14px}
+.gp-mono{font-family:Georgia,"Times New Roman",serif;font-weight:700;font-size:36px;
+  line-height:1;letter-spacing:-.06em;color:#b8324a}
+.gp-text{display:flex;flex-direction:column;gap:4px;line-height:1}
+.gp-eyebrow{align-self:flex-start;border:1px solid #7a2233;color:#e0a9b2;
+  font-size:8px;font-weight:700;letter-spacing:.32em;padding:2px 8px;border-radius:999px;
   text-transform:uppercase;line-height:1}
-.wordmark{position:relative;display:inline-block;font-weight:800;line-height:.9;
-  font-size:30px;letter-spacing:-.005em;color:var(--ink-1);text-transform:uppercase;
-  transform:scaleX(.88);transform-origin:left}
-.wordmark .hy{color:var(--brand)}
-.wordmark .ul{display:block;width:52px;height:8px;background:var(--brand);margin-top:8px;border-radius:1px}
+.gp-title{font-weight:800;font-size:18px;letter-spacing:.005em;line-height:.98;
+  color:#fff;text-transform:uppercase}
+.gp-sub{font-size:10px;font-weight:600;letter-spacing:.42em;color:#b9a0a4;text-transform:uppercase}
+/* aba Resumo */
+table.resumo{width:100%;border-collapse:collapse;font-size:13.5px}
+table.resumo th,table.resumo td{padding:9px 12px;text-align:right;border-bottom:1px solid var(--ring)}
+table.resumo th{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3);font-weight:700}
+table.resumo td.rt,table.resumo th.rt{background:var(--brand-soft);font-weight:700}
+table.resumo td.rk{text-align:left}
+table.resumo .rks{display:block;font-size:11px;color:var(--ink-3);font-weight:400;margin-top:2px}
+.resumo-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:8px 0 18px}
+.rcard{background:var(--card);border:1px solid var(--ring);border-radius:12px;padding:13px 15px}
+.rcard .rl{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3);font-weight:700}
+.rcard .rv{font-size:24px;font-weight:800;color:var(--ink-1);margin-top:5px;line-height:1}
+.rcard .rs{font-size:12px;color:var(--ink-3);margin-top:4px}
+.tagcore,.tagbump{font-size:10px;font-weight:700;padding:1px 7px;border-radius:999px;text-transform:uppercase;letter-spacing:.03em;margin-left:6px;white-space:nowrap}
+.tagcore{background:color-mix(in srgb,var(--good) 18%,transparent);color:var(--good-text);border:1px solid color-mix(in srgb,var(--good) 40%,transparent)}
+.tagbump{background:var(--brand-soft);color:var(--brand);border:1px solid color-mix(in srgb,var(--brand) 35%,transparent)}
 .top-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .badge{
   display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;
@@ -298,9 +316,13 @@ footer a{color:var(--series-1)}
 
   <header class="top">
     <div>
-      <div class="brandlock" aria-label="Best-Seller de Verdade — MasterClass">
-        <span class="mc-pill">Masterclass</span>
-        <div class="wordmark">Best<span class="hy">-</span>Seller<br>de Verdade<span class="ul"></span></div>
+      <div class="gplock" aria-label="Curso Prático — Gestão de Projetos Digitais">
+        <div class="gp-mono">GP</div>
+        <div class="gp-text">
+          <span class="gp-eyebrow">Curso Prático</span>
+          <span class="gp-title">Gestão de<br>Projetos</span>
+          <span class="gp-sub">Digitais</span>
+        </div>
       </div>
       <h1 id="title">Funil de Tráfego</h1>
       <p class="sub" id="subtitle">carregando…</p>
@@ -666,10 +688,12 @@ function setPeriod(from, to, preset){
 /* Decide qual visão renderizar conforme a aba ativa (dashboard × relatório). */
 function refresh(){
   const rep = STATE.tab === "report";
-  const dv = document.getElementById("dashView"), rv = document.getElementById("reportView");
-  if (dv) dv.hidden = rep;
+  const res = STATE.tab === "resumo";
+  const dv = document.getElementById("dashView"), rv = document.getElementById("reportView"), sv = document.getElementById("resumoView");
+  if (dv) dv.hidden = rep || res;
   if (rv) rv.hidden = !rep;
-  if (rep) renderReport(); else render();
+  if (sv) sv.hidden = !res;
+  if (rep) renderReport(); else if (res) renderResumo(); else render();
 }
 
 function deltaHTML(cur, prev, fmt, higherIsBetter){
@@ -1133,6 +1157,69 @@ function adsByName(from, to){
   return [...map.values()].map(derive).filter(a => a.spend > 0 || a.sales > 0);
 }
 
+/* ============================================================ aba Resumo */
+function renderResumo(){
+  const m = DATA.meta;
+  const today = m.date_max, yest = addDays(m.date_max, -1);
+  // Agrega um intervalo. CPA/ROAS sempre na base de TRÁFEGO PAGO (independe da aba ativa).
+  const kpi = (from, to) => {
+    const a = aggregate(from, to);
+    return {
+      vendas: a.allSales,
+      cpa: a.trafSales > 0 ? a.spend / a.trafSales : null,   // investimento c/ imposto ÷ vendas de tráfego
+      roas: a.spend > 0 ? a.trafRev / a.spend : null,        // receita de tráfego ÷ investimento
+    };
+  };
+  const Y = kpi(yest, yest), D = kpi(today, today), T = kpi(m.date_min, m.date_max);
+  const cell = (v, f) => (v == null || !isFinite(v)) ? '<span style="color:var(--ink-3)">—</span>' : f(v);
+  const rowKPI = (label, sub, get, fmt) => `
+    <tr><td class="rk"><b>${label}</b><span class="rks">${sub}</span></td>
+      <td>${cell(get(Y), fmt)}</td><td>${cell(get(D), fmt)}</td><td class="rt">${cell(get(T), fmt)}</td></tr>`;
+
+  const P = DATA.products || { items: [], core: { count: 0, revenue: 0 }, bumps: { count: 0, revenue: 0 }, orderbump: {} };
+  const ob = P.orderbump || {};
+  const prodRow = (x) => `<tr>
+      <td style="text-align:left">${escape_(x.name)} ${x.core ? '<span class="tagcore">Core</span>' : '<span class="tagbump">Order bump</span>'}</td>
+      <td>${int(x.count)}</td><td>${money(x.revenue)}</td></tr>`;
+
+  document.getElementById("resumoView").innerHTML = `
+    <div class="panel">
+      <h2>Resumo diário — Vendas · CPA · ROAS</h2>
+      <p class="note">Ontem (${dayFull(yest)}) · Hoje (${dayFull(today)}) · Total (${dayFull(m.date_min)} – ${dayFull(m.date_max)}).
+        CPA e ROAS usam o investimento <b>com imposto ×${taxStr(m.tax)}</b> e as vendas/receita <b>de tráfego pago</b>.</p>
+      <div class="tblwrap"><table class="resumo">
+        <thead><tr><th style="text-align:left">Métrica</th><th>Ontem</th><th>Hoje</th><th class="rt">Total</th></tr></thead>
+        <tbody>
+          ${rowKPI('Vendas', 'nº de vendas (todas as fontes)', x => x.vendas, v => int(v))}
+          ${rowKPI('CPA', 'investimento ÷ vendas de tráfego', x => x.cpa, v => money(v))}
+          ${rowKPI('ROAS', 'receita de tráfego ÷ investimento', x => x.roas, v => x2(v))}
+        </tbody>
+      </table></div>
+    </div>
+
+    <div class="panel">
+      <h2>Venda por produto — Core × Order bump</h2>
+      <p class="note"><b>Core</b> = ${escape_(P.core_name || 'produto principal')}; os demais produtos entram como <b>order bump</b>.
+        Line-items da aba Vendas Geral (todas as fontes).</p>
+      <div class="resumo-cards">
+        <div class="rcard"><div class="rl">Total Core</div><div class="rv">${money(P.core.revenue)}</div><div class="rs">${int(P.core.count)} venda(s)</div></div>
+        <div class="rcard"><div class="rl">Total Order bumps</div><div class="rv">${money(P.bumps.revenue)}</div><div class="rs">${int(P.bumps.count)} venda(s)</div></div>
+        <div class="rcard"><div class="rl">Taxa de conversão de order bump</div><div class="rv">${ob.rate == null ? '—' : pct1(ob.rate)}</div><div class="rs">${int(ob.orders_with_bump || 0)} de ${int(ob.core_orders || 0)} pedidos do core levaram bump</div></div>
+      </div>
+      <div class="tblwrap"><table class="resumo">
+        <thead><tr><th style="text-align:left">Produto</th><th>Vendas</th><th>Faturamento</th></tr></thead>
+        <tbody>${P.items.map(prodRow).join('')}</tbody>
+      </table></div>
+    </div>
+
+    <div class="panel">
+      <h2>Conversão por página de vendas</h2>
+      <p class="note" style="margin:0">⚠️ <b>Sem dado disponível.</b> A coluna <b>PAGINA</b> da aba BASE COMPLETA está vazia,
+        então ainda não há como medir a conversão por página de vendas (teste de página). Assim que essa coluna passar a
+        registrar uma página por comprador, habilito a métrica aqui.</p>
+    </div>`;
+}
+
 function renderReport(){
   const {from, to} = STATE, days = diffDays(from, to) + 1;
   const pTo = addDays(from, -1), pFrom = addDays(pTo, -(days-1));
@@ -1375,6 +1462,7 @@ function shell(){
     <div class="viewtabs" role="tablist" aria-label="Visão">
       <button data-tab="total" role="tab">📊 Visão Geral</button>
       <button data-tab="traffic" role="tab">🎯 Tráfego Pago</button>
+      <button data-tab="resumo" role="tab">📌 Resumo</button>
       <button data-tab="report" role="tab">📄 Relatório</button>
     </div>
 
@@ -1464,6 +1552,7 @@ function shell(){
     </div>
 
     <div id="reportView" hidden></div>
+    <div id="resumoView" hidden></div>
 
     <footer>
       Gasto bruto do período completo: ${money(DATA.ads.reduce((s,r)=>s+r.spend,0))} ·
@@ -1521,13 +1610,13 @@ function shell(){
   };
 
   // abas: Visão Geral (todas) · Tráfego Pago (meta-ads) · Relatório
-  try { const tv = localStorage.getItem("funnel-tab"); if (["total","traffic","report"].includes(tv)) STATE.tab = tv; } catch(e){}
-  if (STATE.tab !== "report") STATE.mode = STATE.tab;
+  try { const tv = localStorage.getItem("funnel-tab"); if (["total","traffic","resumo","report"].includes(tv)) STATE.tab = tv; } catch(e){}
+  if (STATE.tab === "total" || STATE.tab === "traffic") STATE.mode = STATE.tab;
   document.querySelectorAll("[data-tab]").forEach(b => {
     b.setAttribute("aria-selected", b.dataset.tab === STATE.tab);
     b.onclick = () => {
       STATE.tab = b.dataset.tab;
-      if (STATE.tab !== "report") STATE.mode = STATE.tab;
+      if (STATE.tab === "total" || STATE.tab === "traffic") STATE.mode = STATE.tab;
       try { localStorage.setItem("funnel-tab", STATE.tab); } catch(e){}
       document.querySelectorAll("[data-tab]").forEach(x => x.setAttribute("aria-selected", x.dataset.tab === STATE.tab));
       refresh();
