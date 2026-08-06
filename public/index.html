@@ -74,6 +74,15 @@ table.resumo .rks{display:block;font-size:11px;color:var(--ink-3);font-weight:40
 .tagcore,.tagbump{font-size:10px;font-weight:700;padding:1px 7px;border-radius:999px;text-transform:uppercase;letter-spacing:.03em;margin-left:6px;white-space:nowrap}
 .tagcore{background:color-mix(in srgb,var(--good) 18%,transparent);color:var(--good-text);border:1px solid color-mix(in srgb,var(--good) 40%,transparent)}
 .tagbump{background:var(--brand-soft);color:var(--brand);border:1px solid color-mix(in srgb,var(--brand) 35%,transparent)}
+.rhead{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.rhead h2{margin:0}
+.rtoggle{display:inline-flex;gap:6px}
+.rsub{font-size:13px;font-weight:700;color:var(--ink-2);margin:18px 0 6px}
+.rmut{font-weight:400;color:var(--ink-3);font-size:11.5px}
+.rtrio{display:flex;gap:16px;margin-top:9px}
+.rtrio>div{display:flex;flex-direction:column;font-size:17px;font-weight:800;color:var(--ink-1);line-height:1.2}
+.rtrio>div span{font-size:9.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3)}
+.rtrio>div.rtot{color:var(--brand)}
 .top-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .badge{
   display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;
@@ -1158,58 +1167,92 @@ function adsByName(from, to){
 }
 
 /* ============================================================ aba Resumo */
-function renderResumo(){
-  const m = DATA.meta;
-  const today = m.date_max, yest = addDays(m.date_max, -1);
-  // Agrega um intervalo. CPA/ROAS sempre na base de TRÁFEGO PAGO (independe da aba ativa).
-  const kpi = (from, to) => {
-    const a = aggregate(from, to);
-    return {
-      vendas: a.allSales,
-      cpa: a.trafSales > 0 ? a.spend / a.trafSales : null,   // investimento c/ imposto ÷ vendas de tráfego
-      roas: a.spend > 0 ? a.trafRev / a.spend : null,        // receita de tráfego ÷ investimento
-    };
-  };
-  const Y = kpi(yest, yest), D = kpi(today, today), T = kpi(m.date_min, m.date_max);
-  const cell = (v, f) => (v == null || !isFinite(v)) ? '<span style="color:var(--ink-3)">—</span>' : f(v);
-  const rowKPI = (label, sub, get, fmt) => `
-    <tr><td class="rk"><b>${label}</b><span class="rks">${sub}</span></td>
-      <td>${cell(get(Y), fmt)}</td><td>${cell(get(D), fmt)}</td><td class="rt">${cell(get(T), fmt)}</td></tr>`;
+/* Barras horizontais interativas de faturamento por produto (Core × order bump). */
+function resumoProductChart(host, items){
+  host.innerHTML = "";
+  if (!items.length){ host.innerHTML = '<p class="note">Sem vendas ainda.</p>'; return; }
+  const W = Math.max(320, host.clientWidth || 520);
+  const rowH = 20, gap = 20, top = 8, left = 8, right = 96;
+  const H = top*2 + items.length*rowH + (items.length-1)*gap;
+  const max = Math.max(...items.map(x => x.revenue), 1);
+  const barMaxW = W - left - right;
+  const svg = el("svg", {class:"chart", viewBox:`0 0 ${W} ${H}`, width:"100%", height:H, role:"img"});
+  items.forEach((x,i) => {
+    const y = top + i*(rowH+gap);
+    const w = Math.max(3, (x.revenue/max)*barMaxW);
+    const color = x.core ? "var(--good)" : "var(--brand)";
+    const lb = el("text", {x:left, y:y+2}); lb.setAttribute("font-size","11");
+    lb.textContent = (x.name.length > 52 ? x.name.slice(0,50)+"…" : x.name) + (x.core ? "  ·  Core" : "  ·  order bump");
+    svg.appendChild(lb);
+    svg.appendChild(el("rect", {x:left, y:y+8, width:barMaxW, height:11, rx:5, fill:"var(--plane)"}));
+    svg.appendChild(el("rect", {x:left, y:y+8, width:w, height:11, rx:5, fill:color}));
+    const val = el("text", {x:left+barMaxW+8, y:y+17, "text-anchor":"start"}); val.setAttribute("font-size","11");
+    val.textContent = money0(x.revenue); svg.appendChild(val);
+    const hit = el("rect", {class:"hit", x:0, y, width:W, height:rowH+gap});
+    hit.addEventListener("mousemove", ev => showTip(
+      `<b>${escape_(x.name)}</b><div class="r"><em><i style="background:${color}"></i>${x.core?"Core":"Order bump"}</em><strong>${money(x.revenue)}</strong></div>`
+      + `<div class="r"><em>Vendas</em><strong>${int(x.count)}</strong></div>`, ev));
+    hit.addEventListener("mouseleave", hideTip);
+    svg.appendChild(hit);
+  });
+  host.appendChild(svg);
+}
 
+function renderResumo(){
+  const m = DATA.meta, tax = m.tax;
+  const today = m.date_max, yest = addDays(m.date_max, -1);
+  if (!STATE.resumoBase) STATE.resumoBase = "all";           // "all" = tráfego + orgânico · "traffic" = só tráfego
   const P = DATA.products || { items: [], core: { count: 0, revenue: 0 }, bumps: { count: 0, revenue: 0 }, orderbump: {} };
   const ob = P.orderbump || {};
-  const prodRow = (x) => `<tr>
-      <td style="text-align:left">${escape_(x.name)} ${x.core ? '<span class="tagcore">Core</span>' : '<span class="tagbump">Order bump</span>'}</td>
-      <td>${int(x.count)}</td><td>${money(x.revenue)}</td></tr>`;
+
+  // KPIs de um intervalo, na base escolhida.
+  const kpi = (from, to, base) => {
+    const a = aggregate(from, to);
+    const vendas = base === "traffic" ? a.trafSales : a.allSales;
+    const rev    = base === "traffic" ? a.trafRev   : a.allRev;
+    return { vendas, cpa: vendas > 0 ? a.spend / vendas : null, roas: a.spend > 0 ? rev / a.spend : null };
+  };
+  // Série diária na base escolhida (Vendas, CPA, ROAS por dia).
+  const dailyRows = (base) => {
+    const map = new Map();
+    for (let d = m.date_min; d <= m.date_max; d = addDays(d,1)) map.set(d, {d, spend:0, vendas:0, rev:0});
+    for (const r of DATA.ads) if (map.has(r.d)) map.get(r.d).spend += r.spend * tax;
+    for (const s of DATA.sales){ if (!map.has(s.d)) continue; if (base === "traffic" && !isTraffic(s)) continue; const o = map.get(s.d); o.vendas++; o.rev += s.v; }
+    return [...map.values()].map(o => ({ d:o.d, vendas:o.vendas, spend:o.spend, rev:o.rev,
+      cpa: o.vendas > 0 ? o.spend/o.vendas : null, roas: o.spend > 0 ? o.rev/o.spend : null }));
+  };
+
+  const CBAR = "var(--brand)", CROAS = "#e0900a", CCPA = "#4f86d6";
 
   document.getElementById("resumoView").innerHTML = `
     <div class="panel">
-      <h2>Resumo diário — Vendas · CPA · ROAS</h2>
+      <div class="rhead">
+        <h2>Resumo diário — Vendas · CPA · ROAS</h2>
+        <div class="rtoggle" id="rBase">
+          <button class="btn" data-base="all">Tráfego + Orgânico</button>
+          <button class="btn" data-base="traffic">Apenas Tráfego</button>
+        </div>
+      </div>
       <p class="note">Ontem (${dayFull(yest)}) · Hoje (${dayFull(today)}) · Total (${dayFull(m.date_min)} – ${dayFull(m.date_max)}).
-        CPA e ROAS usam o investimento <b>com imposto ×${taxStr(m.tax)}</b> e as vendas/receita <b>de tráfego pago</b>.</p>
-      <div class="tblwrap"><table class="resumo">
-        <thead><tr><th style="text-align:left">Métrica</th><th>Ontem</th><th>Hoje</th><th class="rt">Total</th></tr></thead>
-        <tbody>
-          ${rowKPI('Vendas', 'nº de vendas (todas as fontes)', x => x.vendas, v => int(v))}
-          ${rowKPI('CPA', 'investimento ÷ vendas de tráfego', x => x.cpa, v => money(v))}
-          ${rowKPI('ROAS', 'receita de tráfego ÷ investimento', x => x.roas, v => x2(v))}
-        </tbody>
-      </table></div>
+        CPA e ROAS usam o investimento <b>com imposto ×${taxStr(tax)}</b>. <span id="rBaseNote"></span></p>
+      <div class="resumo-cards" id="rKPI"></div>
+      <h3 class="rsub">Vendas &amp; ROAS por dia <span class="rmut">· barras = vendas (eixo esq.) · linha = ROAS (eixo dir.) · passe o mouse</span></h3>
+      <div class="legend" id="rLeg"></div>
+      <div id="rChartVR"></div>
+      <h3 class="rsub">CPA por dia <span class="rmut">· investimento ÷ vendas do dia</span></h3>
+      <div id="rChartCPA"></div>
     </div>
 
     <div class="panel">
       <h2>Venda por produto — Core × Order bump</h2>
-      <p class="note"><b>Core</b> = ${escape_(P.core_name || 'produto principal')}; os demais produtos entram como <b>order bump</b>.
-        Line-items da aba Vendas Geral (todas as fontes).</p>
+      <p class="note"><b>Core</b> = ${escape_(P.core_name || "produto principal")}; os demais entram como <b>order bump</b> (aba Vendas Geral, todas as fontes).</p>
       <div class="resumo-cards">
         <div class="rcard"><div class="rl">Total Core</div><div class="rv">${money(P.core.revenue)}</div><div class="rs">${int(P.core.count)} venda(s)</div></div>
         <div class="rcard"><div class="rl">Total Order bumps</div><div class="rv">${money(P.bumps.revenue)}</div><div class="rs">${int(P.bumps.count)} venda(s)</div></div>
-        <div class="rcard"><div class="rl">Taxa de conversão de order bump</div><div class="rv">${ob.rate == null ? '—' : pct1(ob.rate)}</div><div class="rs">${int(ob.orders_with_bump || 0)} de ${int(ob.core_orders || 0)} pedidos do core levaram bump</div></div>
+        <div class="rcard"><div class="rl">Taxa de conversão de order bump</div><div class="rv">${ob.rate == null ? "—" : pct1(ob.rate)}</div><div class="rs">${int(ob.orders_with_bump || 0)} de ${int(ob.core_orders || 0)} pedidos do core levaram bump</div></div>
       </div>
-      <div class="tblwrap"><table class="resumo">
-        <thead><tr><th style="text-align:left">Produto</th><th>Vendas</th><th>Faturamento</th></tr></thead>
-        <tbody>${P.items.map(prodRow).join('')}</tbody>
-      </table></div>
+      <h3 class="rsub">Faturamento por produto <span class="rmut">· verde = Core · roxo = order bump</span></h3>
+      <div id="rChartProd"></div>
     </div>
 
     <div class="panel">
@@ -1218,6 +1261,38 @@ function renderResumo(){
         então ainda não há como medir a conversão por página de vendas (teste de página). Assim que essa coluna passar a
         registrar uma página por comprador, habilito a métrica aqui.</p>
     </div>`;
+
+  document.getElementById("rLeg").innerHTML =
+    `<span><i style="background:${CBAR}"></i>Vendas</span><span><i style="background:${CROAS}"></i>ROAS</span>`;
+  resumoProductChart(document.getElementById("rChartProd"), P.items || []);
+
+  const cardKPI = (name, sub, fmt, key, base) => {
+    const c = v => (v == null || !isFinite(v)) ? "—" : fmt(v);
+    const y = kpi(yest, yest, base)[key], d = kpi(today, today, base)[key], t = kpi(m.date_min, m.date_max, base)[key];
+    return `<div class="rcard"><div class="rl">${name}</div>
+      <div class="rtrio"><div><span>Ontem</span>${c(y)}</div><div><span>Hoje</span>${c(d)}</div><div class="rtot"><span>Total</span>${c(t)}</div></div>
+      <div class="rs">${sub}</div></div>`;
+  };
+
+  function update(){
+    const base = STATE.resumoBase;
+    document.querySelectorAll("#rBase [data-base]").forEach(b => b.classList.toggle("on", b.dataset.base === base));
+    document.getElementById("rBaseNote").textContent = base === "traffic"
+      ? `Base: apenas tráfego pago (utm_source = ${m.traffic_source || "meta-ads"}).`
+      : "Base: tráfego pago + orgânico/direto (todas as vendas).";
+    document.getElementById("rKPI").innerHTML =
+      cardKPI("Vendas", base === "traffic" ? "vendas de tráfego" : "todas as fontes", v => int(v), "vendas", base) +
+      cardKPI("CPA", "investimento ÷ vendas", v => money(v), "cpa", base) +
+      cardKPI("ROAS", "receita ÷ investimento", v => x2(v), "roas", base);
+    const rows = dailyRows(base);
+    comboChart(document.getElementById("rChartVR"), rows, {
+      bars: [{ key:"vendas", color:CBAR, name:"Vendas" }],
+      line: { key:"roas", color:CROAS, name:"ROAS" },
+      leftFmt: v => int(v), rightFmt: v => x2(v), lineFmt: v => x2(v) });
+    barChart(document.getElementById("rChartCPA"), rows, "cpa", CCPA, v => money0(v), "CPA");
+  }
+  document.querySelectorAll("#rBase [data-base]").forEach(b => b.onclick = () => { STATE.resumoBase = b.dataset.base; update(); });
+  update();
 }
 
 function renderReport(){
@@ -1652,7 +1727,7 @@ try {
 document.getElementById("reload").onclick = () => location.reload();
 
 let rt;
-addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { if (DATA) render(); }, 180); });
+addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(() => { if (DATA) refresh(); }, 180); });
 
 load().catch(e => {
   document.getElementById("app").innerHTML =
