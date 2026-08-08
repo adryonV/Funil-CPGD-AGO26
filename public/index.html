@@ -83,6 +83,7 @@ table.resumo .rks{display:block;font-size:11px;color:var(--ink-3);font-weight:40
 .rtrio>div{display:flex;flex-direction:column;font-size:17px;font-weight:800;color:var(--ink-1);line-height:1.2}
 .rtrio>div span{font-size:9.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3)}
 .rtrio>div.rtot{color:var(--brand)}
+table.daily tfoot .totrow td{border-top:2px solid var(--ink-3);font-weight:700;background:color-mix(in srgb,var(--brand) 7%,var(--card))}
 .top-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .badge{
   display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;
@@ -1150,7 +1151,21 @@ function renderDaily(){
     const v = c.fmt(r[c.k]);
     return `<td>${st ? `<span class="cell-scale" style="${st}">${v}</span>` : v}</td>`;
   }).join("")}</tr>`).join("");
-  document.getElementById("dtbl").innerHTML = `<thead><tr>${head}</tr></thead><tbody>${body}</tbody>`;
+
+  // Linha "Geral (média)": volumes = média por dia; taxas/custos = valor do período
+  // BLENDADO (derive dos totais), não a média das taxas diárias (que induziria erro).
+  const N = rows.length || 1;
+  const tot = rows.reduce((a,r) => ({ spend:a.spend+r.spend, imp:a.imp+r.imp, clk:a.clk+r.clk,
+    lpv:a.lpv+r.lpv, ic:a.ic+r.ic, sales:a.sales+r.sales, rev:a.rev+r.rev }),
+    { spend:0, imp:0, clk:0, lpv:0, ic:0, sales:0, rev:0 });
+  const g = derive(tot);
+  const AVGK = { spend:1, ic:1, sales:1 };   // colunas de volume → média/dia
+  const foot = DCOLS.map(c => {
+    if (c.k === "d") return `<td><b>Geral (média)</b></td>`;
+    if (AVGK[c.k]) return `<td>${c.k === "spend" ? M.money(tot[c.k]/N) : nf1.format(tot[c.k]/N)}</td>`;
+    return `<td>${c.fmt(g[c.k])}</td>`;
+  }).join("");
+  document.getElementById("dtbl").innerHTML = `<thead><tr>${head}</tr></thead><tbody>${body}</tbody><tfoot><tr class="totrow">${foot}</tr></tfoot>`;
 }
 
 /* ============================================================ relatório
@@ -1233,7 +1248,7 @@ function renderResumo(){
           <button class="btn" data-base="traffic">Apenas Tráfego</button>
         </div>
       </div>
-      <p class="note">Ontem (${dayFull(yest)}) · Hoje (${dayFull(today)}) · Total (${dayFull(m.date_min)} – ${dayFull(m.date_max)}).
+      <p class="note">Hoje (${dayFull(today)}) · Ontem (${dayFull(yest)}) · Total (${dayFull(m.date_min)} – ${dayFull(m.date_max)}).
         CPA e ROAS usam o investimento <b>com imposto ×${taxStr(tax)}</b>. <span id="rBaseNote"></span></p>
       <div class="resumo-cards" id="rKPI"></div>
       <h3 class="rsub">Vendas &amp; ROAS por dia <span class="rmut">· barras = vendas (eixo esq.) · linha = ROAS (eixo dir.) · passe o mouse</span></h3>
@@ -1270,7 +1285,7 @@ function renderResumo(){
     const c = v => (v == null || !isFinite(v)) ? "—" : fmt(v);
     const y = kpi(yest, yest, base)[key], d = kpi(today, today, base)[key], t = kpi(m.date_min, m.date_max, base)[key];
     return `<div class="rcard"><div class="rl">${name}</div>
-      <div class="rtrio"><div><span>Ontem</span>${c(y)}</div><div><span>Hoje</span>${c(d)}</div><div class="rtot"><span>Total</span>${c(t)}</div></div>
+      <div class="rtrio"><div><span>Hoje</span>${c(d)}</div><div><span>Ontem</span>${c(y)}</div><div class="rtot"><span>Total</span>${c(t)}</div></div>
       <div class="rs">${sub}</div></div>`;
   };
 
@@ -1307,9 +1322,16 @@ function renderReport(){
   const perLabel = days === 1 ? dayFull(from) : `${dayFull(from)} a ${dayFull(to)} · ${days} dias`;
   const over = traf.cac != null && traf.cac > T;
   const repCac = c => c == null || !isFinite(c) ? "—" : `<b style="color:${c <= T ? "var(--good-text)" : "var(--critical)"}">${M.money(c)}</b>`;
+  const dFoot = rows => {
+    const N = rows.length || 1;
+    const t = rows.reduce((a,r) => ({ spend:a.spend+r.spend, ic:a.ic+r.ic, sales:a.sales+r.sales, rev:a.rev+r.rev }),
+      { spend:0, ic:0, sales:0, rev:0 });
+    const g = derive(t);
+    return `<tr class="totrow"><td style="text-align:left"><b>Geral (média)</b></td><td>${M.money(t.spend/N)}</td><td>${nf1.format(t.sales/N)}</td><td>${repCac(g.cac)}</td><td>${M.x(g.roas)}</td><td>${M.pct1(g.convCheck)}</td></tr>`;
+  };
   const dTbl = rows => `<div class="tblwrap"><table class="daily" style="min-width:520px"><thead><tr>
       <th style="text-align:left">Dia</th><th>Gasto</th><th>Vendas</th><th>CAC</th><th>ROAS</th><th>Conv.Checkout</th></tr></thead>
-    <tbody>${[...rows].reverse().map(r => `<tr><td style="text-align:left">${dayFull(r.d)}</td><td>${M.money(r.spend)}</td><td>${int(r.sales)}</td><td>${repCac(r.cac)}</td><td>${M.x(r.roas)}</td><td>${M.pct1(r.convCheck)}</td></tr>`).join("")}</tbody></table></div>`;
+    <tbody>${[...rows].reverse().map(r => `<tr><td style="text-align:left">${dayFull(r.d)}</td><td>${M.money(r.spend)}</td><td>${int(r.sales)}</td><td>${repCac(r.cac)}</td><td>${M.x(r.roas)}</td><td>${M.pct1(r.convCheck)}</td></tr>`).join("")}</tbody><tfoot>${dFoot(rows)}</tfoot></table></div>`;
 
   /* =================== SEÇÕES VISUAIS (limpas — prontas pro print) =================== */
   const secVisual = `
