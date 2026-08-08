@@ -735,8 +735,8 @@ const SUB = [
 ];
 
 /* Saúde do funil ancorada no NÚMERO DO CLIENTE, não em benchmark de mercado:
-   teto de CAC = R$ 110. Tudo (bandas, ROAS, tetos de CPC/CPM) é derivado dele. */
-const CAC_GOAL = 110;   // teto de CAC definido pelo cliente (R$)
+   teto de CAC = R$ 60. Tudo (bandas, ROAS, tetos de CPC/CPM) é derivado dele. */
+const CAC_GOAL = 60;    // teto de CAC definido pelo cliente (R$)
 const TICKET   = 29;    // ticket do produto (R$) — usado só p/ derivar o piso de ROAS = ticket/teto
 
 /* Bandas de referência do funil pós-clique (rules-of-thumb de mercado, EDITÁVEIS).
@@ -932,14 +932,14 @@ function bandScore(pct){
 const scoreColor = s => s == null ? "var(--ink-3)" : s >= 60 ? "var(--good)" : s >= 40 ? "var(--warning)" : "var(--critical)";
 const bandLabel  = s => s == null ? "sem vendas" : s >= 80 ? "Saudável" : s >= 60 ? "Bom" : s >= 40 ? "Atenção" : "Crítico";
 
-/* Saúde = padrão do CAC vs teto R$110. ROAS é o espelho (ticket/CAC); CPC e CPM
+/* Saúde = padrão do CAC vs teto R$60. ROAS é o espelho (ticket/CAC); CPC e CPM
    recebem o teto que, com a conversão ATUAL do funil, segura o CAC no teto. */
 function health(cur){
   const T = CAC_GOAL;
-  const roasFloor = TICKET / T;                                  // piso de ROAS = 29/110
-  const cpcCeil = (cur.conv != null && isFinite(cur.conv)) ? T * cur.conv : null;   // teto CPC = 110 × vendas/clique
+  const roasFloor = TICKET / T;                                  // piso de ROAS = 29/60
+  const cpcCeil = (cur.conv != null && isFinite(cur.conv)) ? T * cur.conv : null;   // teto CPC = 60 × vendas/clique
   const impSale = div(cur.sales, cur.imp);
-  const cpmCeil = impSale != null ? T * impSale * 1000 : null;                       // teto CPM = 110 × vendas/impressão × 1000
+  const cpmCeil = impSale != null ? T * impSale * 1000 : null;                       // teto CPM = 60 × vendas/impressão × 1000
 
   const pctCac  = cur.cac  != null && isFinite(cur.cac)  ? cur.cac / T : null;
   const pctRoas = cur.roas == null || !isFinite(cur.roas) ? null : (cur.roas > 0 ? roasFloor / cur.roas : 5);
