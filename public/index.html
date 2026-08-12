@@ -84,6 +84,9 @@ table.resumo .rks{display:block;font-size:11px;color:var(--ink-3);font-weight:40
 .rtrio>div span{font-size:9.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3)}
 .rtrio>div.rtot{color:var(--brand)}
 table.daily tfoot .totrow td{border-top:2px solid var(--ink-3);font-weight:700;background:color-mix(in srgb,var(--brand) 7%,var(--card))}
+.opt-filter{display:block;width:100%;max-width:440px;margin:2px 0 12px;padding:8px 12px;border:1px solid var(--ring);border-radius:9px;background:var(--plane);color:var(--ink-1);font-size:13px}
+.opt-filter:focus{outline:none;border-color:var(--brand)}
+.opt-filter::placeholder{color:var(--ink-3)}
 .top-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .badge{
   display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;
@@ -1058,9 +1061,28 @@ function flatten(camps){
   return out;
 }
 
+/* Filtro da árvore por nome (campanha/conjunto/anúncio), sem acento e sem caixa.
+   Mostra o nó que casa + seus ancestrais (contexto) + seus descendentes (drill-down). */
+const foldTxt = s => String(s == null ? "" : s).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+function filterTree(camps, q){
+  const fq = foldTxt(q), {key, dir} = STATE.treeSort;
+  const selfMatch = n => foldTxt(n.label).includes(fq);
+  const subMatch  = n => selfMatch(n) || (n.kids || []).some(subMatch);
+  const out = [];
+  const walk = (n, ancOK) => {
+    if (!(ancOK || subMatch(n))) return;
+    out.push(n);
+    const childAnc = ancOK || selfMatch(n);
+    for (const k of sortNodes(n.kids || [], key, dir)) walk(k, childAnc);
+  };
+  for (const c of sortNodes(camps, key, dir)) walk(c, false);
+  return out;
+}
+
 function renderOpt(){
   const {camps, un} = buildTree(STATE.from, STATE.to);
   const {key, dir} = STATE.treeSort;
+  const q = (STATE.optQuery || "").trim(), qActive = q.length > 0;
 
   // Escala de cor calibrada no nível de campanha (baseline estável).
   const scales = {};
@@ -1085,7 +1107,7 @@ function renderOpt(){
 
   const rowHTML = r => {
     const exp = r.level < 2 && r.kids && r.kids.length > 0;
-    const open = STATE.expanded.has(r.key);
+    const open = qActive || STATE.expanded.has(r.key);
     const caret = `<span class="caret">${exp ? "▸" : ""}</span>`;
     return `<tr class="lv${r.level}${exp ? " exp" : ""}${open ? " open" : ""}" data-key="${encodeURIComponent(r.key)}">
       <td><span class="nm">${caret}${escape_(r.label)}</span></td>
@@ -1098,17 +1120,18 @@ function renderOpt(){
   };
 
   const tot = derive(camps.reduce((t,r) => { for (const k of RAW) t[k] += r[k]; return t; }, blank()));
-  const rows = flatten(camps);
+  const rows = qActive ? filterTree(camps, q) : flatten(camps);
   const unLabel = STATE.mode === "total"
     ? "— sem campanha (orgânico/direto ou UTM não casada) —"
     : "— tráfego sem campanha casada (UTM não bateu) —";
-  const unRow = un.sales > 0
+  const unRow = (un.sales > 0 && (!qActive || foldTxt(unLabel).includes(foldTxt(q))))
     ? `<tr class="lv0 muted-row"><td><span class="nm"><span class="caret"></span>${unLabel}</span></td>${TCOLS.slice(1).map(c => `<td>${c.k === "sales" || c.k === "rev" ? c.fmt(un[c.k]) : "—"}</td>`).join("")}</tr>`
     : "";
+  const emptyMsg = qActive ? `Nenhum resultado para “${escape_(q)}”.` : "Nenhum dado no período.";
 
   document.getElementById("tbl").innerHTML = `
     <thead><tr>${head}</tr></thead>
-    <tbody>${rows.map(rowHTML).join("") || `<tr><td colspan="${TCOLS.length}" style="text-align:center;color:var(--ink-3);padding:32px">Nenhum dado no período.</td></tr>`}${unRow}</tbody>
+    <tbody>${rows.map(rowHTML).join("") || `<tr><td colspan="${TCOLS.length}" style="text-align:center;color:var(--ink-3);padding:32px">${emptyMsg}</td></tr>`}${unRow}</tbody>
     <tfoot><tr><td>Total — ${camps.length} campanha(s)</td>${TCOLS.slice(1).map(c => `<td>${c.fmt(tot[c.k])}</td>`).join("")}</tr></tfoot>`;
 
   document.querySelectorAll("#tbl tbody tr.exp").forEach(tr => {
@@ -1166,6 +1189,24 @@ function renderDaily(){
     return `<td>${c.fmt(g[c.k])}</td>`;
   }).join("");
   document.getElementById("dtbl").innerHTML = `<thead><tr>${head}</tr></thead><tbody>${body}</tbody><tfoot><tr class="totrow">${foot}</tr></tfoot>`;
+
+  // Máximo de ~10 dias visíveis; acima disso, rolagem vertical. Cabeçalho e a linha
+  // "Geral (média)" ficam fixos (já são position:sticky no CSS).
+  const dwrap = document.getElementById("dtbl").closest(".tblwrap");
+  if (dwrap){
+    if (rows.length > 10){
+      const tb = document.getElementById("dtbl");
+      const hh = tb.tHead ? tb.tHead.offsetHeight : 0;
+      const fh = tb.tFoot ? tb.tFoot.offsetHeight : 0;
+      const br = tb.tBodies[0] ? tb.tBodies[0].rows : [];
+      let bh = 0; for (let i = 0; i < 10 && i < br.length; i++) bh += br[i].offsetHeight;
+      dwrap.style.maxHeight = (hh + fh + bh + 2) + "px";
+      dwrap.style.overflowY = "auto";
+    } else {
+      dwrap.style.maxHeight = "";
+      dwrap.style.overflowY = "";
+    }
+  }
 }
 
 /* ============================================================ relatório
@@ -1642,6 +1683,7 @@ function shell(){
         Só entram aqui as <b style="color:var(--ink-1)">vendas de tráfego (utm_source = ${escape_(m.traffic_source||"meta-ads")})</b>, agrupadas pela campanha de origem;
         as de tráfego cuja UTM não casou aparecem em “tráfego sem campanha casada”. Vendas orgânicas/diretas não entram.
       </p>
+      <input type="search" id="optSearch" class="opt-filter" placeholder="🔎 Filtrar por campanha, conjunto ou anúncio…" autocomplete="off" spellcheck="false">
       <div class="tblwrap"><table id="tbl" class="tree"></table></div>
     </div>
 
@@ -1695,6 +1737,13 @@ function shell(){
     render();
   });
   document.querySelector('[data-metric="spend"]').classList.add("on");
+
+  // filtro da Otimização (persiste enquanto render() só troca o innerHTML de #tbl)
+  const optSearch = document.getElementById("optSearch");
+  if (optSearch){
+    optSearch.value = STATE.optQuery || "";
+    optSearch.oninput = e => { STATE.optQuery = e.target.value; renderOpt(); };
+  }
 
   // meta de investimento (guardada no navegador)
   const goalInput = document.getElementById("goal");
