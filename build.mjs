@@ -59,12 +59,13 @@ function parseCSV(text) {
   return rows;
 }
 
-// Number in Brazilian or plain format: "1.234,56" / "46,9" / "197"
+// Number in Brazilian or plain format: "R$ 1.234,56" / "R$ 17,65" / "46,9" / "197".
+// Some cells carry the "R$" prefix + space (col O "Faturamento líquido"), others don't.
 function num(s) {
   if (s == null) return 0;
-  s = String(s).trim();
+  s = String(s).replace(/R\$/gi, '').replace(/[\s ]/g, '');   // tira "R$", espaços e nbsp
   if (!s) return 0;
-  if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+  if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.'); // 1.234,56 -> 1234.56
   const n = parseFloat(s);
   return Number.isFinite(n) ? n : 0;
 }
