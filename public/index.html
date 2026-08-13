@@ -775,7 +775,7 @@ const METRIC_COLS = [
   {k:"cpic",     label:"C/Checkout",  fmt:M.money,  hint:"Custo por checkout", scale:"low"},
   {k:"sales",    label:"Vendas",      fmt:M.int,    hint:"Vendas"},
   {k:"cac",      label:"CAC",         fmt:M.money,  hint:"Custo por venda", scale:"low"},
-  {k:"roas",     label:"ROAS",        fmt:M.x,      hint:"Receita ÷ investimento", scale:"high"},
+  {k:"roas",     label:"ROAS",        fmt:M.x,      hint:"Receita líquida ÷ investimento", scale:"high"},
   {k:"convCheck",label:"Conv.Check.", fmt:M.pct1,   hint:"Conversão checkout → compra: vendas ÷ checkouts"},
   {k:"convLpv",  label:"Conv.LP",     fmt:M.pct1,   hint:"Conversão LP → venda: vendas ÷ page views"}
 ];
@@ -789,7 +789,7 @@ const DCOLS = [{k:"d", label:"Dia", fmt:null}, ...METRIC_COLS];
 const METRICS = [
   {k:"spend", label:"Investimento", fmt:M.money0},
   {k:"sales", label:"Vendas",       fmt:M.int},
-  {k:"rev",   label:"Receita",      fmt:M.money0},
+  {k:"rev",   label:"Receita líq.", fmt:M.money0},
   {k:"roas",  label:"ROAS",         fmt:M.x},
   {k:"cac",   label:"CAC",          fmt:M.money0},
   {k:"cpl",   label:"CPL",          fmt:M.money},
@@ -845,7 +845,7 @@ function render(){
     <div class="hcard"><div class="hk">💸 Investimento <small>com imposto</small></div>
       <div class="hv">${M.money(cur.spend)}</div><div class="hd">${miniDelta(cur.spend,prev.spend,null)} vs anterior</div></div>
     <div class="op">→</div>
-    <div class="hcard"><div class="hk">💰 Receita</div>
+    <div class="hcard"><div class="hk">💰 Receita <small>líquida</small></div>
       <div class="hv g">${M.money(cur.rev)}</div><div class="hd">${miniDelta(cur.rev,prev.rev,true)} vs anterior</div></div>
     <div class="op">=</div>
     <div class="hcard roas"><div class="hk">📈 ROAS <small>retorno</small></div>
@@ -854,7 +854,7 @@ function render(){
     <div class="hcard cac" style="border-top:3px solid ${cacCol}"><div class="hk">🎯 CAC <small>limite ${M.money(CAC_GOAL)}</small></div>
       <div class="hv" style="color:${cacCol}">${M.money(cur.cac)}</div><div class="hd">${cacStatus}</div></div>`;
   document.getElementById("heroLine").innerHTML = (cur.spend > 0 && cur.roas !== null)
-    ? `Cada <b>R$ 1,00</b> investido virou <b>${M.money(cur.roas)}</b> de receita · ${M.money(cur.spend)} → ${M.money(cur.rev)} no período${STATE.compare ? " · variações vs. período anterior" : ""}.`
+    ? `Cada <b>R$ 1,00</b> investido virou <b>${M.money(cur.roas)}</b> de receita líquida · ${M.money(cur.spend)} → ${M.money(cur.rev)} no período${STATE.compare ? " · variações vs. período anterior" : ""}.`
     : `Sem investimento no período selecionado.`;
 
   const src = escape_(DATA.meta.traffic_source || "meta-ads");
@@ -878,7 +878,7 @@ function render(){
     leftFmt:M.money0, rightFmt:M.int, lineFmt:M.int, labelBars:true, labelLine:true
   });
   comboChart(document.getElementById("chB"), rows, {
-    bars:[{key:"rev", color:"var(--good)", name:"Faturamento"},
+    bars:[{key:"rev", color:"var(--good)", name:"Faturamento líq."},
           {key:"spend", color:"var(--critical)", name:"Investimento c/ imposto"}],
     line:{key:"roas", color:"var(--ink-1)", name:"ROAS"},
     leftFmt:M.money0, rightFmt:M.x, lineFmt:M.x, labelBars:false, labelLine:true
@@ -889,7 +889,7 @@ function render(){
     `<span>${lgSq("var(--critical)")}<span style="color:var(--ink-2)">Investimento c/ imposto</span></span>` +
     `<span>${lgLn("var(--good)")}<span style="color:var(--ink-2)">Vendas (eixo dir.)</span></span>`;
   document.getElementById("legB").innerHTML =
-    `<span>${lgSq("var(--good)")}<span style="color:var(--ink-2)">Faturamento</span></span>` +
+    `<span>${lgSq("var(--good)")}<span style="color:var(--ink-2)">Faturamento líq.</span></span>` +
     `<span>${lgSq("var(--critical)")}<span style="color:var(--ink-2)">Investimento c/ imposto</span></span>` +
     `<span>${lgLn("var(--ink-1)")}<span style="color:var(--ink-2)">ROAS (eixo dir.)</span></span>`;
 
@@ -1301,13 +1301,13 @@ function renderResumo(){
 
     <div class="panel">
       <h2>Venda por produto — Core × Order bump</h2>
-      <p class="note"><b>Core</b> = ${escape_(P.core_name || "produto principal")}; os demais entram como <b>order bump</b> (aba Vendas Geral, todas as fontes).</p>
+      <p class="note"><b>Core</b> = ${escape_(P.core_name || "produto principal")}; os demais entram como <b>order bump</b>. Faturamento <b>líquido</b> (coluna O), todas as fontes.</p>
       <div class="resumo-cards">
         <div class="rcard"><div class="rl">Total Core</div><div class="rv">${money(P.core.revenue)}</div><div class="rs">${int(P.core.count)} venda(s)</div></div>
         <div class="rcard"><div class="rl">Total Order bumps</div><div class="rv">${money(P.bumps.revenue)}</div><div class="rs">${int(P.bumps.count)} venda(s)</div></div>
         <div class="rcard"><div class="rl">Taxa de conversão de order bump</div><div class="rv">${ob.rate == null ? "—" : pct1(ob.rate)}</div><div class="rs">${int(ob.orders_with_bump || 0)} de ${int(ob.core_orders || 0)} pedidos do core levaram bump</div></div>
       </div>
-      <h3 class="rsub">Faturamento por produto <span class="rmut">· verde = Core · roxo = order bump</span></h3>
+      <h3 class="rsub">Faturamento líquido por produto <span class="rmut">· verde = Core · roxo = order bump</span></h3>
       <div id="rChartProd"></div>
     </div>
 
@@ -1339,7 +1339,7 @@ function renderResumo(){
     document.getElementById("rKPI").innerHTML =
       cardKPI("Vendas", base === "traffic" ? "vendas de tráfego" : "todas as fontes", v => int(v), "vendas", base) +
       cardKPI("CPA", "investimento ÷ vendas", v => money(v), "cpa", base) +
-      cardKPI("ROAS", "receita ÷ investimento", v => x2(v), "roas", base);
+      cardKPI("ROAS", "receita líq. ÷ investimento", v => x2(v), "roas", base);
     const rows = dailyRows(base);
     comboChart(document.getElementById("rChartVR"), rows, {
       bars: [{ key:"vendas", color:CBAR, name:"Vendas" }],
@@ -1381,7 +1381,7 @@ function renderReport(){
       <h3>📊 Funil no total</h3>
       <div class="rep-stats">
         ${repStat("Investimento", M.money(tot.spend))}
-        ${repStat("Receita total", M.money(tot.allRev))}
+        ${repStat("Receita líq. total", M.money(tot.allRev))}
         ${repStat("Vendas totais", int(tot.allSales))}
         ${repStat("ROAS total", M.x(tot.roas))}
         ${repStat("CAC total", M.money(tot.cac))}
@@ -1392,7 +1392,7 @@ function renderReport(){
       <h3>🎯 Só o tráfego (o que a mídia gera)</h3>
       <div class="rep-stats">
         ${repStat("Investimento", M.money(traf.spend))}
-        ${repStat("Receita tráfego", M.money(traf.trafRev))}
+        ${repStat("Receita líq. tráfego", M.money(traf.trafRev))}
         ${repStat("Vendas tráfego", int(traf.sales))}
         ${repStat("CAC tráfego", repCac(traf.cac))}
         ${repStat("Meta de CAC", M.money(T))}
@@ -1650,8 +1650,8 @@ function shell(){
           linha = <b style="color:var(--ink-2)">Vendas</b> (eixo dir., nº).</p>
         <div class="legend" id="legA"></div>
         <div id="chA"></div>
-        <h2 style="margin-top:20px">Faturamento × Investimento × ROAS</h2>
-        <p class="note">Barras = <b style="color:var(--ink-2)">Faturamento</b> e <b style="color:var(--ink-2)">Investimento</b> (eixo esq., R$) ·
+        <h2 style="margin-top:20px">Faturamento líq. × Investimento × ROAS</h2>
+        <p class="note">Barras = <b style="color:var(--ink-2)">Faturamento líq.</b> e <b style="color:var(--ink-2)">Investimento</b> (eixo esq., R$) ·
           linha = <b style="color:var(--ink-2)">ROAS</b> (eixo dir.).</p>
         <div class="legend" id="legB"></div>
         <div id="chB"></div>

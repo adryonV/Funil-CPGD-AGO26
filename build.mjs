@@ -8,15 +8,13 @@
 //   1) Métricas dos Anúncios — aba "Meta Ads": Day / Campaign Name / Ad Set Name /
 //      Ad Name / Amount Spent / Impressions / Link Clicks / Landing Page Views /
 //      Checkouts Initiated. One row per day×campaign×conjunto×anúncio.
-//   2) Lista de Compradores — DUAS abas:
-//        • "BASE COMPLETA" → ESPINHA DAS VENDAS: 1 linha por comprador COM as UTMs
-//          (utm_source/medium/campaign/content) e o PRIMEIRO nome. É a única aba com
-//          atribuição ("de qual anúncio veio"), então ela define contagem + funil.
-//        • "Vendas Geral"  → só o VALOR (Data|Hora, Nome completo, Produto, Bruto).
-//          NÃO tem UTM e NÃO é a lista completa (vendas recuperadas ficam fora dela).
-//      Para cada venda da BASE COMPLETA buscamos o valor na Vendas Geral pelo PRIMEIRO
-//      nome (+ data); comprador sem valor (venda recuperada) entra a R$ 19,90.
-//      Atribuição pago/orgânico e campanha/conjunto/anúncio vêm das UTMs da BASE COMPLETA.
+//   2) Lista de Compradores — aba "BASE COMPLETA" (fonte ÚNICA): 1 LINE-ITEM por
+//      produto comprado, com PRODUTO, NOME, EMAIL, UTMs, "Order Bump?" (ignorado — não
+//      é confiável) e "Faturamento líquido" (coluna O). CORE = produto cujo nome é
+//      "Curso Prático de Gestão de Projetos Digitais"; qualquer outro = order bump.
+//      Cada line-item CORE é UMA venda; agrupamos por NOME+EMAIL para somar, na receita
+//      da venda core, os order bumps do mesmo comprador. Receita e ROAS usam o LÍQUIDO.
+//      Atribuição pago/orgânico e campanha/conjunto/anúncio vêm das UTMs da linha core.
 //
 // IMPOSTO: o gasto vai CRU (bruto) no data.json; o dashboard multiplica por meta.tax
 // (×1,1385) antes de TODAS as métricas — assim nenhuma métrica escapa do imposto.
@@ -28,8 +26,7 @@ const ADS_ID   = '1Q4KoC76d6aG7KG582jxYiLE3_bBeeNFyQ8gltg5BPq4';
 const BUYERS_ID = '1-03Pwug1SlYVa8JoxYQYsi5Lj5xTb1UVrpY8qfpY3u4';
 
 const SHEET_ADS   = `https://docs.google.com/spreadsheets/d/${ADS_ID}/export?format=csv&gid=0`;
-const SHEET_BASE  = `https://docs.google.com/spreadsheets/d/${BUYERS_ID}/export?format=csv&gid=151354425`; // BASE COMPLETA
-const SHEET_VENDAS = `https://docs.google.com/spreadsheets/d/${BUYERS_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent('Vendas Geral')}`;
+const SHEET_BASE  = `https://docs.google.com/spreadsheets/d/${BUYERS_ID}/export?format=csv&gid=151354425`; // BASE COMPLETA (line-items c/ líquido)
 
 const ADS_URL   = `https://docs.google.com/spreadsheets/d/${ADS_ID}/edit`;
 const BUYERS_URL = `https://docs.google.com/spreadsheets/d/${BUYERS_ID}/edit`;
@@ -123,10 +120,9 @@ async function fetchText(url, label) {
 const headerIndex = (h, name) => h.findIndex((x) => x.trim().toLowerCase() === name.toLowerCase());
 
 (async () => {
-  const [csvAds, csvBase, csvVendas] = await Promise.all([
+  const [csvAds, csvBase] = await Promise.all([
     fetchText(SHEET_ADS, 'ads sheet'),
     fetchText(SHEET_BASE, 'BASE COMPLETA'),
-    fetchText(SHEET_VENDAS, 'Vendas Geral'),
   ]);
 
   // ---------------- Sheet 1: Meta Ads metrics ----------------
@@ -204,78 +200,67 @@ const headerIndex = (h, name) => h.findIndex((x) => x.trim().toLowerCase() === n
     return best;
   }
 
-  // ---------------- Sheet 2b: Vendas Geral (VALUE lookup, by name) ----------------
-  // Vendas Geral has the purchase value (Bruto) but NO UTM. Used only to price each
-  // buyer. NOTE: it is NOT the complete sales list — recovered sales live in other
-  // tabs and are absent here — so it must NOT be the sales spine (that's BASE COMPLETA).
-  const v = parseCSV(csvVendas);
-  const h3 = v[0] || [];
-  const V = {
-    date: headerIndex(h3, 'Data | Hora') >= 0 ? headerIndex(h3, 'Data | Hora') : 0,
-    name: headerIndex(h3, 'Nome'),
-    prod: headerIndex(h3, 'Produto'),
-    val:  headerIndex(h3, 'Bruto'),
-  };
-  const FALLBACK_VALUE = 19.90;   // buyer with no value found (recovered sale) → R$19,90
-  const vgByND = new Map();       // "first|date" -> value
-  const vgByN  = new Map();       // "first" -> value (first occurrence)
-  const vgRows = [];              // {fn, d, value} — for the "só Vendas Geral" fallback
-  for (let i = 1; i < v.length; i++) {
-    const r = v[i];
-    if (!r || r.length < 2) continue;
-    const value = num(r[V.val]);
-    if (!(value > 0)) continue;
-    const fn = firstName(r[V.name]);
-    if (!fn) continue;
-    const d = isoDate(r[V.date]);
-    if (d) vgByND.set(fn + '|' + d, value);
-    if (!vgByN.has(fn)) vgByN.set(fn, value);
-    vgRows.push({ fn, d, value, prod: normKey(r[V.prod]) });
-  }
-  const valueFor = (fn, d) =>
-    (d && vgByND.has(fn + '|' + d)) ? vgByND.get(fn + '|' + d)
-    : vgByN.has(fn) ? vgByN.get(fn)
-    : null;
+  // ---------------- Sheet 2: BASE COMPLETA = fonte ÚNICA de vendas + atribuição -----
+  // Traz 1 LINE-ITEM por produto comprado, com NOME, EMAIL, UTMs, o PRODUTO e o
+  // "Faturamento líquido" (coluna O). Cada compra do CORE é UMA venda; os demais
+  // produtos são order bumps. Cruzamos por NOME+EMAIL para somar, na receita da venda
+  // core, os order bumps do mesmo comprador. Receita e ROAS usam o LÍQUIDO (coluna O).
+  const CORE_PRODUCT = 'Curso Prático de Gestão de Projetos Digitais';
+  const coreFold = fold(CORE_PRODUCT);
+  const round2 = (n) => Math.round(n * 100) / 100;
 
-  // ---------------- Sheet 2a: BASE COMPLETA = SALES SPINE (count + attribution) ----
-  // Each row is one sale/buyer WITH its ad attribution (UTMs). This is the only sheet
-  // that carries "de qual anúncio veio", so it drives the sales count and the funnel.
   const b = parseCSV(csvBase);
   const h2 = b[0] || [];
   const B = {
     date:  headerIndex(h2, 'DATA'),
+    prod:  headerIndex(h2, 'PRODUTO'),
     name:  headerIndex(h2, 'NOME'),
+    email: headerIndex(h2, 'EMAIL'),
     src:   headerIndex(h2, 'utm_source'),
     med:   headerIndex(h2, 'utm_medium'),
     camp:  headerIndex(h2, 'utm_campaign'),
     cont:  headerIndex(h2, 'utm_content'),
+    liq:   headerIndex(h2, 'Faturamento líquido'),
   };
-  const sales = [];
-  const attribution = { ad: 0, adset: 0, campaign: 0, none: 0 };
-  let trafficSales = 0, fallbackValued = 0;
-  const bcFirst = new Set();
 
+  // 1ª passada: lê todos os line-items e agrupa por COMPRADOR (nome+email).
+  const items = [];
+  const buyers = new Map();               // "nome|email" -> { coreCount, bumpLiq, bumpCount }
   for (let i = 1; i < b.length; i++) {
     const r = b[i];
     if (!r || r.length < 2) continue;
-    const fn = firstName(r[B.name]);
-    if (!fn) continue;
-    bcFirst.add(fn);
-    const d = isoDate(r[B.date]);
-    if (!d) continue;
+    const prod = normKey(r[B.prod]);
+    if (!prod) continue;
+    const emailF = fold(r[B.email]);
+    const key = fold(r[B.name]) + '|' + emailF;
+    const isCore = fold(prod) === coreFold;
+    const it = { d: isoDate(r[B.date]), prod, isCore, liq: num(r[B.liq]), key, emailF,
+      src: r[B.src], camp: r[B.camp], med: r[B.med], cont: r[B.cont] };
+    items.push(it);
+    let bu = buyers.get(key);
+    if (!bu) { bu = { coreCount: 0, bumpLiq: 0, bumpCount: 0 }; buyers.set(key, bu); }
+    if (isCore) bu.coreCount++; else { bu.bumpLiq += it.liq; bu.bumpCount++; }
+  }
 
-    // Value: buyer's Bruto from Vendas Geral; if absent (recovered sale) → R$19,90.
-    let value = valueFor(fn, d);
-    if (value == null) { value = FALLBACK_VALUE; fallbackValued++; }
+  // 2ª passada: 1 VENDA por line-item CORE. Receita = líquido do core + rateio dos
+  // order bumps do MESMO comprador. Atribuição (pago/campanha/anúncio) vem do core.
+  const sales = [];
+  const attribution = { ad: 0, adset: 0, campaign: 0, none: 0 };
+  let trafficSales = 0, coreNoEmail = 0;
+  for (const it of items) {
+    if (!it.isCore || !it.d) continue;
+    const bu = buyers.get(it.key);
+    const bumpShare = bu && bu.coreCount ? bu.bumpLiq / bu.coreCount : 0;   // rateia entre os cores do comprador
+    if (!it.emailF) coreNoEmail++;
 
-    const paid = isPaidSource(r[B.src]);
+    const paid = isPaidSource(it.src);
     let src = 'organico', m = '', c = '', s = '', ad = '';
     if (paid) {
       src = 'meta-ads';
-      // UTMs = "<name>|<meta id>" (utm_content also has a ::tracking:: tail). Strip the id
-      // → cleaned values match the ads sheet EXACTLY; map to canonical spelling.
-      ad = resolveAdName(adFromContent(r[B.cont]));
-      const uCamp = stripId(r[B.camp]), uSet = stripId(r[B.med]);
+      // UTMs = "<name>|<meta id>" (utm_content também tem cauda ::tracking::). Tira o id
+      // → os valores limpos casam EXATO com a planilha de anúncios (grafia canônica).
+      ad = resolveAdName(adFromContent(it.cont));
+      const uCamp = stripId(it.camp), uSet = stripId(it.med);
       const adCombo = ad ? adToCombo.get(fold(ad)) : null;
       c = canonCamp.get(fold(uCamp)) || (adCombo ? adCombo.c : '') || (isUtm(uCamp) ? uCamp : '');
       s = canonSet.get(fold(uSet))  || (adCombo ? adCombo.s : '') || (isUtm(uSet)  ? uSet  : '');
@@ -283,50 +268,30 @@ const headerIndex = (h, name) => h.findIndex((x) => x.trim().toLowerCase() === n
       trafficSales++;
       attribution[m]++;
     }
-    sales.push({ d, v: Math.round(value * 100) / 100, src, m, c, s, a: ad });
-  }
-
-  // Sales present only in Vendas Geral (no BASE COMPLETA row → no UTM) count as
-  // organic/unattributed so the "Visão Geral" total stays complete (e.g. Vitória).
-  let vgOnly = 0;
-  for (const row of vgRows) {
-    if (bcFirst.has(row.fn) || !row.d) continue;
-    vgOnly++;
-    sales.push({ d: row.d, v: Math.round(row.value * 100) / 100, src: 'organico', m: '', c: '', s: '', a: '' });
+    sales.push({ d: it.d, v: round2(it.liq + bumpShare), src, m, c, s, a: ad });
   }
   const salesRows = sales.length;
 
-  // ---------------- Produtos: Core × Order bump (da Vendas Geral, line-items) -------
-  // Core = produto principal do lançamento; o resto (Combo, Profissão, etc.) = order bump.
-  const CORE_PRODUCT = 'Curso Prático de Gestão de Projetos Digitais';
-  const coreFold = fold(CORE_PRODUCT);
-  const round2 = (n) => Math.round(n * 100) / 100;
-  const prodMap = new Map();                 // nome -> {count, revenue}
-  for (const r of vgRows) {
-    const name = r.prod || '(sem produto)';
+  // ---------------- Produtos: Core × Order bump (LÍQUIDO, por PRODUTO) --------------
+  const prodMap = new Map();
+  for (const it of items) {
+    const name = it.prod || '(sem produto)';
     const o = prodMap.get(name) || { count: 0, revenue: 0 };
-    o.count++; o.revenue += r.value; prodMap.set(name, o);
+    o.count++; o.revenue += it.liq; prodMap.set(name, o);
   }
   const prodItems = [...prodMap.entries()]
     .map(([name, o]) => ({ name, count: o.count, revenue: round2(o.revenue), core: fold(name) === coreFold }))
     .sort((a, b) => (b.core - a.core) || (b.revenue - a.revenue));
   const sumG = (f) => prodItems.filter(f).reduce((t, x) => ({ count: t.count + x.count, revenue: round2(t.revenue + x.revenue) }), { count: 0, revenue: 0 });
-  // Order bump: por PEDIDO (comprador+dia) — dos pedidos com o Core, quantos levaram um bump.
-  const orderMap = new Map();                // "fn|dia" -> {core, bump}
-  for (const r of vgRows) {
-    const key = r.fn + '|' + (r.d || '');
-    const o = orderMap.get(key) || { core: false, bump: false };
-    if (fold(r.prod) === coreFold) o.core = true; else if (r.prod) o.bump = true;
-    orderMap.set(key, o);
-  }
-  let coreOrders = 0, ordersWithBump = 0;
-  for (const o of orderMap.values()) if (o.core) { coreOrders++; if (o.bump) ordersWithBump++; }
+  // Order bump: dos COMPRADORES (nome+email) que levaram o core, quantos também levaram ≥1 bump.
+  let coreBuyers = 0, buyersWithBump = 0;
+  for (const bu of buyers.values()) if (bu.coreCount) { coreBuyers++; if (bu.bumpCount > 0) buyersWithBump++; }
   const products = {
     core_name: CORE_PRODUCT,
     items: prodItems,
     core: sumG((x) => x.core),
     bumps: sumG((x) => !x.core),
-    orderbump: { core_orders: coreOrders, orders_with_bump: ordersWithBump, rate: coreOrders ? round2(ordersWithBump / coreOrders * 100) / 100 : null },
+    orderbump: { core_orders: coreBuyers, orders_with_bump: buyersWithBump, rate: coreBuyers ? round2(buyersWithBump / coreBuyers * 100) / 100 : null },
   };
 
   // ---------------- Output (reference data.json contract) ----------------
@@ -337,8 +302,7 @@ const headerIndex = (h, name) => h.findIndex((x) => x.trim().toLowerCase() === n
   }).replace(',', '');
 
   const warnings = [];
-  if (fallbackValued > 0) warnings.push(`${fallbackValued} venda(s) sem valor na Vendas Geral (ex.: recuperadas) — receita estimada em R$ 19,90 cada.`);
-  if (vgOnly > 0) warnings.push(`${vgOnly} venda(s) só na Vendas Geral, sem UTM na BASE COMPLETA — contadas como orgânicas/não atribuídas.`);
+  if (coreNoEmail > 0) warnings.push(`${coreNoEmail} venda(s) core sem e-mail — o cruzamento de order bump nesses casos usa só o nome.`);
   if (attribution.none > 0) warnings.push(`${attribution.none} venda(s) de tráfego sem anúncio resolvido (UTM incompleta).`);
 
   const out = {
@@ -353,7 +317,7 @@ const headerIndex = (h, name) => h.findIndex((x) => x.trim().toLowerCase() === n
       date_max: allDates[allDates.length - 1] || null,
       ads_url: ADS_URL,
       sales_url: BUYERS_URL,
-      sales_tab: 'BASE COMPLETA (atribuição) + Vendas Geral (valor)',
+      sales_tab: 'BASE COMPLETA (líquido, coluna O · core por nome + order bump por nome/e-mail)',
       counts: {
         ads_rows: ads.length,
         sales_rows: salesRows,
