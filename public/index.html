@@ -379,6 +379,13 @@ const dayBR   = iso => { const [y,m,d] = iso.split("-"); return `${d}/${m}`; };
 const dayFull = iso => { const [y,m,d] = iso.split("-"); return `${d}/${m}/${y}`; };
 const addDays = (iso,n) => { const d = new Date(iso+"T12:00:00Z"); d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10); };
 const diffDays= (a,b) => Math.round((new Date(b+"T12:00:00Z") - new Date(a+"T12:00:00Z"))/864e5);
+// "Hoje" no fuso de São Paulo; janelas móveis (7/14/30) terminam em ONTEM (nunca hoje).
+const todayBR = () => {
+  const parts = new Intl.DateTimeFormat("en-CA", {timeZone:"America/Sao_Paulo", year:"numeric", month:"2-digit", day:"2-digit"}).formatToParts(new Date());
+  const g = t => (parts.find(p => p.type === t) || {}).value;
+  return `${g("year")}-${g("month")}-${g("day")}`;
+};
+const rollEnd = (dmax) => { const y = addDays(todayBR(), -1); return (dmax && dmax < y) ? dmax : y; };
 const escape_ = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
 /* ============================================================ estado */
@@ -1713,8 +1720,9 @@ function shell(){
     if (p === "today") return setPeriod(m.date_max, m.date_max, "today");
     if (p === "yesterday"){ const y = addDays(m.date_max, -1); const f = y < m.date_min ? m.date_min : y; return setPeriod(f, f, "yesterday"); }
     const n = +p;
-    const from = addDays(m.date_max, -(n-1));
-    setPeriod(from < m.date_min ? m.date_min : from, m.date_max, p);
+    const end = rollEnd(m.date_max);                 // ontem (não inclui hoje)
+    const from = addDays(end, -(n-1));
+    setPeriod(from < m.date_min ? m.date_min : from, end < m.date_min ? m.date_min : end, p);
   });
   const clampDates = () => {
     let f = document.getElementById("from").value, t = document.getElementById("to").value;
