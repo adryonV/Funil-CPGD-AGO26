@@ -1619,6 +1619,7 @@ function shell(){
         <button class="btn" data-preset="7">7 dias</button>
         <button class="btn" data-preset="14">14 dias</button>
         <button class="btn" data-preset="30">30 dias</button>
+        <button class="btn" data-preset="month">Este Mês</button>
         <button class="btn" data-preset="all">Tudo</button>
       </div>
       <div class="grp">
@@ -1719,6 +1720,7 @@ function shell(){
     if (p === "all")   return setPeriod(m.date_min, m.date_max, "all");
     if (p === "today") return setPeriod(m.date_max, m.date_max, "today");
     if (p === "yesterday"){ const y = addDays(m.date_max, -1); const f = y < m.date_min ? m.date_min : y; return setPeriod(f, f, "yesterday"); }
+    if (p === "month"){ const end = rollEnd(m.date_max); const ms = todayBR().slice(0,7)+"-01"; let from = ms < m.date_min ? m.date_min : ms; let to = end < from ? (m.date_max < from ? from : m.date_max) : end; return setPeriod(from, to, "month"); }
     const n = +p;
     const end = rollEnd(m.date_max);                 // ontem (não inclui hoje)
     const from = addDays(end, -(n-1));
